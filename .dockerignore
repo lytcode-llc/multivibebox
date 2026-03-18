@@ -1,0 +1,7 @@
+notify/
+.git/
+*.md
+.mvb.pid
+config/.env
+config/projects/
+.DS_Store

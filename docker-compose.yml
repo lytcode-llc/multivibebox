@@ -1,0 +1,19 @@
+services:
+  mvb:
+    build: .
+    container_name: mvb-${MVB_PROJECT:-default}
+    stdin_open: true
+    tty: true
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MVB_AGENTS=${MVB_AGENTS:-claude}
+      - MVB_LAYOUT=${MVB_LAYOUT:-tiled}
+      - MVB_PROJECT=${MVB_PROJECT:-default}
+      - MVB_SHARED=${MVB_SHARED:-false}
+      - MVB_MAX_PANES=${MVB_MAX_PANES:-6}
+    volumes:
+      - ${MVB_WORKSPACE_VOLUME}:/workspace
+      - ./notify:/notify
+      - ./config:/config
+    working_dir: /workspace

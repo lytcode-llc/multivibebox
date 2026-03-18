@@ -1,0 +1,8 @@
+config/.env
+notify/
+.mvb.pid
+config/projects/
+*.swp
+*.swo
+.DS_Store
+.claude
