@@ -95,13 +95,31 @@ HOOKEOF
     fi
 fi
 
+# Check for existing conversation history (Claude Code specific)
+# Claude stores conversations in ~/.claude/projects/<path-with-dashes>/
+has_conversation_history() {
+    if [ "$AGENT_CMD" != "claude" ]; then
+        return 1
+    fi
+    local project_dir
+    project_dir="$HOME/.claude/projects/$(pwd | tr '/' '-')"
+    [ -d "$project_dir" ] && ls "$project_dir"/*.jsonl &>/dev/null
+}
+
 # Main loop: run agent, restart on exit
 while true; do
+    # On first run, resume prior conversation if one exists
+    local_args="$AGENT_ARGS"
+    if has_conversation_history; then
+        echo "Resuming previous conversation..."
+        local_args="$AGENT_ARGS --continue"
+    fi
+
     echo "Starting $AGENT_NAME..."
     echo "---"
 
     # Run the agent
-    $AGENT_CMD $AGENT_ARGS
+    $AGENT_CMD $local_args
 
     EXIT_CODE=$?
     echo ""

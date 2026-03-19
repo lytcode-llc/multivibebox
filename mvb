@@ -21,25 +21,37 @@ usage() {
 Usage: mvb <command> [options]
 
 Commands:
-  start [project]              Start or resume a project
-    --path DIR                 Bind-mount a local folder as workspace
-    --shared                   All agents share one directory (no worktrees)
-    --agents AGENTS            Comma-separated agent list (overrides .env)
-  stop                         Stop container and host watcher
-  list                         List all projects
-  attach [agent]               Attach to tmux session or a specific agent pane
-  merge                        Interactive merge of agent worktree branches
-  open [agent] [file]          Open agent worktree in VS Code
-  config                       Edit .env in $EDITOR
-  destroy <project>            Remove a project and its volume
-  help                         Show this help
+  start [session] [pane-specs...]   Start or resume a session
+    --path DIR                      Bind-mount a local folder (single-project mode)
+    --shared                        All agents share one directory (no worktrees)
+    --agents AGENTS                 Comma-separated agent list (single-project mode)
+  stop                              Stop container and host watcher
+  list                              List all projects
+  attach [pane-name]                Attach to tmux session or a specific pane
+  merge                             Interactive merge of agent worktree branches
+  open [agent] [file]               Open agent worktree in VS Code
+  config                            Edit .env in $EDITOR
+  destroy <project>                 Remove a project and its volume
+  help                              Show this help
+
+Pane specs (multi-project mode):
+  Each pane spec is agent:path — an agent name and a local folder path.
+  Multiple panes can share the same path.
 
 Examples:
+  # Single project (all panes share one workspace)
   mvb start myproject --path ~/Projects/myproject
-  mvb start myproject --agents claude,aider
-  mvb attach claude
+  mvb start myproject --path ~/Projects/myproject --agents claude,aider
+
+  # Multi-project (each pane gets its own workspace)
+  mvb start coding \
+    claude:~/Projects/frontend \
+    claude:~/Projects/frontend \
+    claude:~/Projects/backend \
+    claude:~/Projects/api
+
+  mvb attach claude-frontend-0
   mvb merge
-  mvb open claude src/main.py
 EOF
 }
 
@@ -119,7 +131,8 @@ is_running() {
 # ---- Commands ----
 
 cmd_start() {
-    local project="" workspace_path="" shared="false" agents=""
+    local session="" workspace_path="" shared="false" agents=""
+    local -a pane_specs=()
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -141,11 +154,31 @@ cmd_start() {
                 exit 1
                 ;;
             *)
-                project="$1"
+                # Check if this is a pane spec (contains ':')
+                if [[ "$1" == *":"* ]]; then
+                    pane_specs+=("$1")
+                elif [ -z "$session" ]; then
+                    session="$1"
+                else
+                    # Treat as pane spec without colon — assume claude:path
+                    pane_specs+=("claude:$1")
+                fi
                 shift
                 ;;
         esac
     done
+
+    # Detect mode: multi-project (pane specs) vs single-project (--path/--agents)
+    if [ ${#pane_specs[@]} -gt 0 ]; then
+        cmd_start_multi "$session" "$shared" "${pane_specs[@]}"
+    else
+        cmd_start_single "$session" "$workspace_path" "$shared" "$agents"
+    fi
+}
+
+# Single-project mode: all panes share one workspace
+cmd_start_single() {
+    local project="$1" workspace_path="$2" shared="$3" agents="$4"
 
     # Default project name
     if [ -z "$project" ]; then
@@ -163,7 +196,6 @@ cmd_start() {
     existing=$(load_project "$project")
     if [ -n "$existing" ]; then
         echo -e "${BLUE}Resuming project: $project${NC}"
-        # Use saved settings as defaults, override with CLI args
         if [ -z "$workspace_path" ]; then
             workspace_path=$(echo "$existing" | jq -r '.path // empty')
         fi
@@ -193,7 +225,6 @@ cmd_start() {
         echo -e "Workspace: ${GREEN}$workspace_path${NC} (bind mount)"
     else
         volume_spec="mvb-${project}"
-        # Create named volume if it doesn't exist
         docker volume create "mvb-${project}" >/dev/null 2>&1 || true
         echo -e "Workspace: ${GREEN}mvb-${project}${NC} (Docker volume)"
     fi
@@ -201,23 +232,13 @@ cmd_start() {
     echo -e "Agents: ${GREEN}$agents${NC}"
     echo -e "Mode: ${GREEN}$([ "$shared" = "true" ] && echo "shared" || echo "worktree")${NC}"
 
-    # Save project metadata
     save_project "$project" "$workspace_path" "$shared" "$agents"
 
-    # Start host watcher
     start_host_watcher
 
-    # Extract Claude OAuth token from macOS Keychain if available
-    local claude_oauth_token=""
-    if command -v security &>/dev/null; then
-        claude_oauth_token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
-            | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['claudeAiOauth']['accessToken'])" 2>/dev/null || true)
-        if [ -n "$claude_oauth_token" ]; then
-            echo -e "Auth: ${GREEN}Pro subscription (OAuth from Keychain)${NC}"
-        fi
-    fi
+    local claude_oauth_token
+    claude_oauth_token=$(extract_oauth_token)
 
-    # Launch container via docker compose
     cd "$MVB_REPO"
     MVB_PROJECT="$project" \
     MVB_AGENTS="$agents" \
@@ -225,6 +246,148 @@ cmd_start() {
     MVB_WORKSPACE_VOLUME="$volume_spec" \
     CLAUDE_CODE_OAUTH_TOKEN="$claude_oauth_token" \
     docker compose run --rm --service-ports mvb
+}
+
+# Multi-project mode: each pane spec gets its own workspace
+cmd_start_multi() {
+    local session="$1" shared="$2"
+    shift 2
+    local -a pane_specs=("$@")
+
+    load_env
+
+    # Auto-generate session name from unique project names if not provided
+    if [ -z "$session" ]; then
+        local names=""
+        for spec in "${pane_specs[@]}"; do
+            local p="${spec#*:}"
+            p="${p/#\~/$HOME}"
+            local n
+            n=$(basename "$p")
+            # Append if not already in the list
+            case ",$names," in
+                *",$n,"*) ;;
+                *) names="${names:+$names+}$n" ;;
+            esac
+        done
+        session="$names"
+    fi
+
+    local pane_count=${#pane_specs[@]}
+    local max_panes="${MVB_MAX_PANES:-6}"
+
+    if [ "$pane_count" -gt "$max_panes" ]; then
+        echo -e "${YELLOW}WARNING: $pane_count panes requested, max is $max_panes.${NC}"
+        echo "Using first $max_panes panes only."
+        pane_specs=("${pane_specs[@]:0:$max_panes}")
+        pane_count=$max_panes
+    fi
+
+    # Check if already running
+    if is_running "$session"; then
+        echo -e "${YELLOW}Session $session is already running. Attaching...${NC}"
+        cmd_attach
+        return
+    fi
+
+    echo -e "${BLUE}Starting multi-project session: $session${NC}"
+    echo -e "Panes: ${GREEN}$pane_count${NC}"
+
+    # Build volume mounts and pane config
+    # Track unique paths to avoid duplicate mounts (parallel arrays instead of associative)
+    local volume_args=""
+    local known_host_paths=""
+    local known_container_paths=""
+    local mvb_panes=""
+    local mount_index=0
+
+    for i in $(seq 0 $((pane_count - 1))); do
+        local spec="${pane_specs[$i]}"
+        local agent="${spec%%:*}"
+        local host_path="${spec#*:}"
+
+        # Expand ~ and resolve to absolute path
+        host_path="${host_path/#\~/$HOME}"
+        host_path="$(cd "$host_path" 2>/dev/null && pwd)" || {
+            echo -e "${RED}Path not found: ${spec#*:}${NC}"
+            exit 1
+        }
+
+        local project_name
+        project_name=$(basename "$host_path")
+
+        # Assign container mount point (reuse if same host path)
+        local container_path=""
+
+        # Check if we've already seen this host path
+        local found=false
+        local idx=0
+        while IFS= read -r known; do
+            [ -z "$known" ] && continue
+            if [ "$known" = "$host_path" ]; then
+                # Get the matching container path
+                container_path=$(echo "$known_container_paths" | sed -n "$((idx + 1))p")
+                found=true
+                break
+            fi
+            idx=$((idx + 1))
+        done <<< "$known_host_paths"
+
+        if [ "$found" = "false" ]; then
+            container_path="/workspaces/${project_name}"
+            # Handle duplicate project names with different paths
+            if echo "$known_container_paths" | grep -q "^${container_path}$" 2>/dev/null; then
+                container_path="/workspaces/${project_name}-${mount_index}"
+            fi
+            known_host_paths="${known_host_paths}${host_path}
+"
+            known_container_paths="${known_container_paths}${container_path}
+"
+            volume_args="${volume_args} -v ${host_path}:${container_path}"
+            mount_index=$((mount_index + 1))
+        fi
+
+        # Build pane name: agent-project-index (for unique tmux pane titles)
+        local pane_name="${agent}-${project_name}-${i}"
+
+        # Append to MVB_PANES (semicolon-separated, pipe-delimited fields)
+        # Format: agent|container_path|pane_name
+        if [ -n "$mvb_panes" ]; then
+            mvb_panes="${mvb_panes};"
+        fi
+        mvb_panes="${mvb_panes}${agent}|${container_path}|${pane_name}"
+
+        echo -e "  Pane $i: ${GREEN}${agent}${NC} → ${host_path}"
+    done
+
+    start_host_watcher
+
+    local claude_oauth_token
+    claude_oauth_token=$(extract_oauth_token)
+
+    # Launch container with dynamic volume mounts
+    cd "$MVB_REPO"
+    MVB_PROJECT="$session" \
+    MVB_PANES="$mvb_panes" \
+    MVB_SHARED="$shared" \
+    MVB_WORKSPACE_VOLUME="mvb-default" \
+    CLAUDE_CODE_OAUTH_TOKEN="$claude_oauth_token" \
+    docker compose run --rm --service-ports \
+        $volume_args \
+        mvb
+}
+
+# Extract OAuth token from macOS Keychain
+extract_oauth_token() {
+    local token=""
+    if command -v security &>/dev/null; then
+        token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
+            | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['claudeAiOauth']['accessToken'])" 2>/dev/null || true)
+        if [ -n "$token" ]; then
+            echo -e "Auth: ${GREEN}Pro subscription (OAuth from Keychain)${NC}" >&2
+        fi
+    fi
+    echo "$token"
 }
 
 cmd_stop() {
