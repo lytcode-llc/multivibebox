@@ -99,9 +99,6 @@ for i in $(seq 1 $((AGENT_COUNT - 1))); do
     tmux select-layout -t mvb:main "$MVB_LAYOUT" 2>/dev/null || tmux select-layout -t mvb:main tiled
 done
 
-# Start pane monitor in the background
-/opt/mvb/scripts/pane-monitor.sh &
-
 # Select first pane
 tmux select-pane -t mvb:main.0
 

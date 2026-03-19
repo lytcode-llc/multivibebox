@@ -36,6 +36,39 @@ if [ "$AGENT_CMD" = "claude" ]; then
 CCEOF
     fi
 
+    # Configure notification hooks (replaces pane-monitor polling).
+    # UserPromptSubmit records start time; Notification checks elapsed
+    # time and only notifies the host if response took > 30 seconds.
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.json" <<HOOKEOF
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/mvb/scripts/notify-hook.sh start $AGENT_NAME"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/mvb/scripts/notify-hook.sh notify $AGENT_NAME"
+          }
+        ]
+      }
+    ]
+  }
+}
+HOOKEOF
+
     # Auth priority:
     # 1. CLAUDE_CODE_OAUTH_TOKEN env var (Pro subscription via Keychain)
     # 2. ANTHROPIC_API_KEY env var (API usage billing)

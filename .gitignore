@@ -6,3 +6,6 @@ config/projects/
 *.swo
 .DS_Store
 .claude
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
