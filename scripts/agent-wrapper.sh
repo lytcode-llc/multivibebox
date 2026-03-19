@@ -24,6 +24,44 @@ if [ -n "$AGENT_INSTALL" ] && ! command -v "$AGENT_CMD" &>/dev/null; then
     eval "$AGENT_INSTALL"
 fi
 
+# Agent-specific pre-flight checks
+if [ "$AGENT_CMD" = "claude" ]; then
+    # Create config to skip first-run onboarding (browser login)
+    if [ ! -f "$HOME/.claude.json" ]; then
+        cat > "$HOME/.claude.json" <<'CCEOF'
+{
+  "hasCompletedOnboarding": true,
+  "hasAvailableSubscription": true
+}
+CCEOF
+    fi
+
+    # Auth priority:
+    # 1. CLAUDE_CODE_OAUTH_TOKEN env var (Pro subscription via Keychain)
+    # 2. ANTHROPIC_API_KEY env var (API usage billing)
+    if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+        echo "Using Pro subscription (OAuth token)."
+        unset ANTHROPIC_API_KEY
+    elif [ -n "$ANTHROPIC_API_KEY" ]; then
+        echo "Using API key (API usage billing)."
+    else
+        echo ""
+        echo "ERROR: No Claude Code authentication found."
+        echo "Browser login doesn't work inside containers."
+        echo ""
+        echo "  Option 1: Pro subscription (recommended)"
+        echo "    Log in to Claude Code on the host first: claude"
+        echo "    mvb automatically extracts your token from the macOS Keychain."
+        echo ""
+        echo "  Option 2: API key"
+        echo "    Get a key from https://console.anthropic.com/settings/keys"
+        echo "    Run: mvb config"
+        echo "    Set: ANTHROPIC_API_KEY=sk-ant-..."
+        echo ""
+        exec bash
+    fi
+fi
+
 # Main loop: run agent, restart on exit
 while true; do
     echo "Starting $AGENT_NAME..."

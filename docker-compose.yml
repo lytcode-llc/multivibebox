@@ -5,15 +5,20 @@ services:
     stdin_open: true
     tty: true
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - MVB_AGENTS=${MVB_AGENTS:-claude}
       - MVB_LAYOUT=${MVB_LAYOUT:-tiled}
       - MVB_PROJECT=${MVB_PROJECT:-default}
       - MVB_SHARED=${MVB_SHARED:-false}
       - MVB_MAX_PANES=${MVB_MAX_PANES:-6}
+      - TERM=xterm-256color
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
     volumes:
-      - ${MVB_WORKSPACE_VOLUME}:/workspace
+      - ${MVB_WORKSPACE_VOLUME:-mvb-default}:/workspace
       - ./notify:/notify
       - ./config:/config
     working_dir: /workspace
+
+volumes:
+  mvb-default:

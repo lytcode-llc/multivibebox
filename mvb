@@ -207,12 +207,23 @@ cmd_start() {
     # Start host watcher
     start_host_watcher
 
+    # Extract Claude OAuth token from macOS Keychain if available
+    local claude_oauth_token=""
+    if command -v security &>/dev/null; then
+        claude_oauth_token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
+            | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['claudeAiOauth']['accessToken'])" 2>/dev/null || true)
+        if [ -n "$claude_oauth_token" ]; then
+            echo -e "Auth: ${GREEN}Pro subscription (OAuth from Keychain)${NC}"
+        fi
+    fi
+
     # Launch container via docker compose
     cd "$MVB_REPO"
     MVB_PROJECT="$project" \
     MVB_AGENTS="$agents" \
     MVB_SHARED="$shared" \
     MVB_WORKSPACE_VOLUME="$volume_spec" \
+    CLAUDE_CODE_OAUTH_TOKEN="$claude_oauth_token" \
     docker compose run --rm --service-ports mvb
 }
 

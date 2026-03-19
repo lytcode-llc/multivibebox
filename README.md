@@ -1,6 +1,14 @@
 # Multivibebox
 
-A Docker-based development environment for macOS that runs multiple CLI coding agents simultaneously in tmux panes, with audio notifications when any agent responds. Starts with Claude Code but extensible to any CLI agent (Aider, Codex, etc.).
+A Docker-based development environment that runs multiple CLI coding agents simultaneously in tmux panes, with audio notifications when any agent responds. Starts with Claude Code but extensible to any CLI agent (Aider, Codex, etc.).
+
+## Supported Platforms
+
+- **macOS** — fully supported (audio via `afplay`, uses system sounds)
+- **Linux** — fully supported (audio via `paplay` for PulseAudio or `aplay` for ALSA, falls back to freedesktop system sounds)
+- **Windows** — requires [WSL 2](https://learn.microsoft.com/en-us/windows/wsl/install) with Docker Desktop configured to use the WSL 2 backend. Run all `mvb` commands from within your WSL terminal. Audio via `powershell.exe` using Windows system sounds.
+
+You can also place custom `.wav` or `.ogg` files in the `sounds/` directory, named to match the `NOTIFY_SOUND` value in your agent config (e.g., `sounds/Glass.wav`).
 
 ## Architecture
 
@@ -32,9 +40,9 @@ A Docker-based development environment for macOS that runs multiple CLI coding a
 
 ## Prerequisites
 
-- **macOS** (audio notifications use `afplay`)
+- **macOS, Linux, or WSL 2** (see [Supported Platforms](#supported-platforms))
 - **Docker Desktop** installed and running
-- **jq** (`brew install jq`)
+- **jq** (`brew install jq` on macOS, `apt install jq` on Linux/WSL)
 - An **Anthropic API key** (for Claude Code)
 
 ## Quick Start

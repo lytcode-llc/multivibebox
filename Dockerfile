@@ -24,10 +24,10 @@ RUN npm install -g @anthropic-ai/claude-code
 # RUN npm install -g @openai/codex
 # --- End agent installs ---
 
-# Create non-root user
+# Create non-root user with Claude Code config directory
 RUN useradd -m -s /bin/bash vibe && \
-    mkdir -p /workspace /notify /config && \
-    chown -R vibe:vibe /workspace /notify /config
+    mkdir -p /workspace /notify /config /home/vibe/.claude && \
+    chown -R vibe:vibe /workspace /notify /config /home/vibe/.claude
 
 # Copy scripts and config
 COPY --chown=vibe:vibe scripts/ /opt/mvb/scripts/

@@ -10,8 +10,9 @@ build:
 	docker compose build
 
 uninstall:
-	@echo "Removing mvb from $(INSTALL_DIR)..."
-	@if [ -w "$(INSTALL_DIR)" ]; then \
+	@echo "Removing mvb..."
+	@rm -f "$$HOME/.local/bin/mvb" 2>/dev/null; \
+	if [ -w "$(INSTALL_DIR)" ]; then \
 		rm -f "$(INSTALL_DIR)/mvb"; \
 	else \
 		sudo rm -f "$(INSTALL_DIR)/mvb"; \

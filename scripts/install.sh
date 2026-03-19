@@ -26,16 +26,35 @@ if ! docker info &>/dev/null; then
     exit 1
 fi
 
-# Install mvb to PATH
-if [ -w "$INSTALL_DIR" ]; then
-    cp "$REPO_DIR/mvb" "$INSTALL_DIR/mvb"
-    chmod +x "$INSTALL_DIR/mvb"
+# Install mvb to PATH via symlink (stays in sync with repo)
+install_symlink() {
+    local target="$1"
+    if [ -w "$(dirname "$target")" ]; then
+        ln -sf "$REPO_DIR/mvb" "$target"
+    else
+        echo -e "${YELLOW}Need sudo to symlink to $target${NC}"
+        sudo ln -sf "$REPO_DIR/mvb" "$target"
+    fi
+    echo -e "  ${GREEN}✓${NC} Linked mvb → $target"
+}
+
+if [ -n "$MVB_INSTALL_DIR" ]; then
+    # User explicitly chose an install dir
+    install_symlink "$INSTALL_DIR/mvb"
+elif [ -w "$INSTALL_DIR" ] || sudo -n true 2>/dev/null; then
+    install_symlink "$INSTALL_DIR/mvb"
 else
-    echo -e "${YELLOW}Need sudo to install to $INSTALL_DIR${NC}"
-    sudo cp "$REPO_DIR/mvb" "$INSTALL_DIR/mvb"
-    sudo chmod +x "$INSTALL_DIR/mvb"
+    # Fall back to ~/.local/bin (no sudo needed)
+    INSTALL_DIR="$HOME/.local/bin"
+    mkdir -p "$INSTALL_DIR"
+    install_symlink "$INSTALL_DIR/mvb"
+    # Check if ~/.local/bin is in PATH
+    if ! echo "$PATH" | tr ':' '\n' | grep -q "^$INSTALL_DIR$"; then
+        echo -e "  ${YELLOW}→ Add this to your shell profile (~/.zshrc or ~/.bashrc):${NC}"
+        echo -e "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo -e "  ${YELLOW}  Then restart your shell or run: source ~/.zshrc${NC}"
+    fi
 fi
-echo -e "  ${GREEN}✓${NC} Installed mvb to $INSTALL_DIR/mvb"
 
 # Create user config directory
 mkdir -p "$HOME/.mvb"
@@ -56,7 +75,7 @@ mkdir -p "$REPO_DIR/notify"
 echo ""
 echo -e "${GREEN}Building Docker image...${NC}"
 cd "$REPO_DIR"
-docker compose build
+MVB_WORKSPACE_VOLUME=mvb-default docker compose build
 
 echo ""
 echo -e "${GREEN}Installation complete!${NC}"
