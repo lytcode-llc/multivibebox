@@ -18,6 +18,7 @@ services:
     volumes:
       - ${MVB_WORKSPACE_VOLUME:-mvb-default}:/workspace
       - mvb-claude-state:/home/vibe/.claude
+      - ${HOME}/.claude/plugins:/home/vibe/.claude/plugins:ro
       - ./notify:/notify
       - ./config:/config
     working_dir: /workspace

@@ -21,7 +21,7 @@ if [ -n "$MVB_PANES" ]; then
     # First pane (already exists in new session)
     IFS='|' read -r first_agent first_workdir first_pane_name <<< "${PANE_SPECS[0]}"
     tmux send-keys -t mvb:main "cd $first_workdir && exec /opt/mvb/scripts/agent-wrapper.sh $first_agent" Enter
-    tmux select-pane -t mvb:main -T "$first_pane_name"
+    tmux select-pane -t mvb:main -T "$first_pane_name │ $first_workdir"
 
     # Remaining panes
     for i in $(seq 1 $((PANE_COUNT - 1))); do
@@ -29,7 +29,7 @@ if [ -n "$MVB_PANES" ]; then
 
         tmux split-window -t mvb:main
         tmux send-keys -t mvb:main "cd $workdir && exec /opt/mvb/scripts/agent-wrapper.sh $agent" Enter
-        tmux select-pane -t mvb:main -T "$pane_name"
+        tmux select-pane -t mvb:main -T "$pane_name │ $workdir"
 
         # Rebalance layout after each split
         tmux select-layout -t mvb:main "$MVB_LAYOUT" 2>/dev/null || tmux select-layout -t mvb:main tiled
@@ -118,7 +118,7 @@ tmux -f /opt/mvb/config/tmux.conf new-session -d -s mvb -n main
 # Set up first agent in the initial pane
 first_agent=$(echo "${AGENTS[0]}" | xargs)
 tmux send-keys -t mvb:main "cd /workspace-${first_agent}-0 && exec /opt/mvb/scripts/agent-wrapper.sh $first_agent" Enter
-tmux select-pane -t mvb:main -T "${first_agent}-0"
+tmux select-pane -t mvb:main -T "${first_agent}-0 │ /workspace-${first_agent}-0"
 
 # Create additional panes for remaining agents
 for i in $(seq 1 $((AGENT_COUNT - 1))); do
@@ -126,7 +126,7 @@ for i in $(seq 1 $((AGENT_COUNT - 1))); do
 
     tmux split-window -t mvb:main
     tmux send-keys -t mvb:main "cd /workspace-${agent}-${i} && exec /opt/mvb/scripts/agent-wrapper.sh $agent" Enter
-    tmux select-pane -t mvb:main -T "${agent}-${i}"
+    tmux select-pane -t mvb:main -T "${agent}-${i} │ /workspace-${agent}-${i}"
 
     # Rebalance layout after each split
     tmux select-layout -t mvb:main "$MVB_LAYOUT" 2>/dev/null || tmux select-layout -t mvb:main tiled

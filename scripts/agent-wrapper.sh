@@ -26,8 +26,20 @@ fi
 
 # Agent-specific pre-flight checks
 if [ "$AGENT_CMD" = "claude" ]; then
-    # Create config to skip first-run onboarding (browser login)
-    if [ ! -f "$HOME/.claude.json" ]; then
+    # Ensure onboarding flags are set to skip browser login dialog.
+    # Claude Code may overwrite .claude.json with its own fields,
+    # so we merge our required flags in every time.
+    if [ -f "$HOME/.claude.json" ]; then
+        python3 -c "
+import json
+with open('$HOME/.claude.json') as f:
+    data = json.load(f)
+data['hasCompletedOnboarding'] = True
+data['hasAvailableSubscription'] = True
+with open('$HOME/.claude.json', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null
+    else
         cat > "$HOME/.claude.json" <<'CCEOF'
 {
   "hasCompletedOnboarding": true,

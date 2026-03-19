@@ -377,17 +377,49 @@ cmd_start_multi() {
         mvb
 }
 
-# Extract OAuth token from macOS Keychain
+# Extract OAuth token from platform credential store
 extract_oauth_token() {
     local token=""
+
+    # macOS: extract from Keychain
     if command -v security &>/dev/null; then
         token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
             | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['claudeAiOauth']['accessToken'])" 2>/dev/null || true)
         if [ -n "$token" ]; then
             echo -e "Auth: ${GREEN}Pro subscription (OAuth from Keychain)${NC}" >&2
+            echo "$token"
+            return
         fi
     fi
-    echo "$token"
+
+    # Linux/WSL: extract from ~/.claude/.credentials.json
+    local creds_file="${HOME}/.claude/.credentials.json"
+    if [ -f "$creds_file" ]; then
+        token=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('$creds_file'))
+    # Try known credential key patterns
+    for key in ('claudeAiOauth', 'oauth'):
+        if key in data and 'accessToken' in data[key]:
+            print(data[key]['accessToken'])
+            sys.exit(0)
+    # Fall back to scanning for any access token
+    for v in data.values():
+        if isinstance(v, dict) and 'accessToken' in v:
+            print(v['accessToken'])
+            sys.exit(0)
+except Exception:
+    pass
+" 2>/dev/null || true)
+        if [ -n "$token" ]; then
+            echo -e "Auth: ${GREEN}Pro subscription (OAuth from credentials file)${NC}" >&2
+            echo "$token"
+            return
+        fi
+    fi
+
+    echo ""
 }
 
 cmd_stop() {
