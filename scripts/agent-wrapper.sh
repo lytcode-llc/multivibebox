@@ -26,9 +26,19 @@ else
 fi
 
 # Run install command if agent binary not found
+# Only allows install from config files shipped with the image or mounted at /config/agents/
 if [ -n "$AGENT_INSTALL" ] && ! command -v "$AGENT_CMD" &>/dev/null; then
-    echo "Installing $AGENT_NAME..."
-    eval "$AGENT_INSTALL"
+    # Validate install command uses a known safe package manager
+    case "$AGENT_INSTALL" in
+        pip3\ install*|pip\ install*|npm\ install*|apt-get\ install*|brew\ install*)
+            echo "Installing $AGENT_NAME..."
+            bash -c "$AGENT_INSTALL"
+            ;;
+        *)
+            echo "WARNING: Refusing to run untrusted install command: $AGENT_INSTALL"
+            echo "Only pip, npm, apt-get, and brew install commands are allowed."
+            ;;
+    esac
 fi
 
 # Agent-specific pre-flight checks
@@ -89,9 +99,14 @@ CCEOF
 HOOKEOF
 
     # Auth priority:
-    # 1. CLAUDE_CODE_OAUTH_TOKEN env var (Pro subscription via Keychain)
+    # 1. OAuth token from mounted secret file (Pro subscription)
     # 2. ANTHROPIC_API_KEY env var (API usage billing)
-    if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+    if [ -f /run/secrets/oauth_token ]; then
+        export CLAUDE_CODE_OAUTH_TOKEN
+        CLAUDE_CODE_OAUTH_TOKEN=$(cat /run/secrets/oauth_token)
+        echo "Using Pro subscription (OAuth token)."
+        unset ANTHROPIC_API_KEY
+    elif [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
         echo "Using Pro subscription (OAuth token)."
         unset ANTHROPIC_API_KEY
     elif [ -n "$ANTHROPIC_API_KEY" ]; then

@@ -128,6 +128,15 @@ container_name() {
     echo "mvb-${1:-default}"
 }
 
+# Validate agent name (alphanumeric, hyphens, underscores only)
+validate_agent_name() {
+    local name="$1"
+    if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo -e "${RED}Invalid agent name: '$name'. Only letters, numbers, hyphens, and underscores allowed.${NC}" >&2
+        exit 1
+    fi
+}
+
 # Check if container is running
 is_running() {
     docker ps --format '{{.Names}}' | grep -q "mvb.*${1:-default}"
@@ -249,6 +258,12 @@ cmd_start_single() {
 
     agents="${agents:-${MVB_AGENTS:-claude}}"
 
+    # Validate agent names
+    IFS=',' read -ra agent_list <<< "$agents"
+    for a in "${agent_list[@]}"; do
+        validate_agent_name "$(echo "$a" | xargs)"
+    done
+
     # Check if already running
     if is_running "$project"; then
         echo -e "${YELLOW}Project $project is already running. Attaching...${NC}"
@@ -285,21 +300,31 @@ cmd_start_single() {
     claude_oauth_token=$(extract_oauth_token)
 
     # SSH agent forwarding for private repo access
-    local ssh_args=""
+    local -a extra_args=()
     if [ -n "$repo_url" ]; then
         case "$(uname -s)" in
             Darwin)
                 # macOS Docker Desktop provides a built-in SSH agent socket
-                ssh_args="-v /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock -e SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock"
+                extra_args+=(-v /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock -e SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock)
                 ;;
             Linux)
                 if [ -n "${SSH_AUTH_SOCK:-}" ]; then
-                    ssh_args="-v $SSH_AUTH_SOCK:/tmp/ssh-agent.sock -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock"
+                    extra_args+=(-v "$SSH_AUTH_SOCK:/tmp/ssh-agent.sock" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock)
                 else
                     echo -e "${YELLOW}Warning: SSH_AUTH_SOCK not set. Private repos may fail. Run 'eval \$(ssh-agent) && ssh-add' first.${NC}"
                 fi
                 ;;
         esac
+    fi
+
+    # Pass OAuth token via mounted file (not env var) to avoid exposure in ps/docker inspect
+    local token_file=""
+    if [ -n "$claude_oauth_token" ]; then
+        token_file=$(mktemp)
+        echo "$claude_oauth_token" > "$token_file"
+        chmod 600 "$token_file"
+        extra_args+=(-v "$token_file:/run/secrets/oauth_token:ro")
+        trap "rm -f '$token_file'" EXIT
     fi
 
     cd "$MVB_REPO"
@@ -308,8 +333,7 @@ cmd_start_single() {
     MVB_SHARED="$shared" \
     MVB_WORKSPACE_VOLUME="$volume_spec" \
     MVB_REPO_URL="$repo_url" \
-    CLAUDE_CODE_OAUTH_TOKEN="$claude_oauth_token" \
-    docker compose run --rm --service-ports $ssh_args mvb
+    docker compose run --rm --service-ports "${extra_args[@]}" mvb
 }
 
 # Multi-project mode: each pane spec gets its own workspace
@@ -368,6 +392,7 @@ cmd_start_multi() {
     for i in $(seq 0 $((pane_count - 1))); do
         local spec="${pane_specs[$i]}"
         local agent="${spec%%:*}"
+        validate_agent_name "$agent"
         local host_path="${spec#*:}"
 
         # Expand ~ and resolve to absolute path
@@ -448,15 +473,26 @@ cmd_start_multi() {
     local claude_oauth_token
     claude_oauth_token=$(extract_oauth_token)
 
+    # Pass OAuth token via mounted file (not env var) to avoid exposure in ps/docker inspect
+    local token_file=""
+    local -a token_args=()
+    if [ -n "$claude_oauth_token" ]; then
+        token_file=$(mktemp)
+        echo "$claude_oauth_token" > "$token_file"
+        chmod 600 "$token_file"
+        token_args=(-v "$token_file:/run/secrets/oauth_token:ro")
+        trap "rm -f '$token_file'" EXIT
+    fi
+
     # Launch container with dynamic volume mounts
     cd "$MVB_REPO"
     MVB_PROJECT="$project" \
     MVB_PANES="$mvb_panes" \
     MVB_SHARED="$shared" \
     MVB_WORKSPACE_VOLUME="mvb-default" \
-    CLAUDE_CODE_OAUTH_TOKEN="$claude_oauth_token" \
     docker compose run --rm --service-ports \
         $volume_args \
+        "${token_args[@]}" \
         mvb
 }
 
@@ -615,7 +651,7 @@ cmd_attach() {
                     | grep "$target" | head -1 | cut -d: -f1)
                 if [ -n "$pane_match" ]; then
                     container="$c"
-                    docker exec -it "$container" bash -c "tmux select-pane -t mvb:main.${pane_match} && tmux attach-session -t mvb"
+                    docker exec -it "$container" bash -c "tmux select-pane -t 'mvb:main.${pane_match}' && tmux attach-session -t mvb"
                     return
                 fi
             done
@@ -782,8 +818,11 @@ cmd_config() {
     local env_file="$MVB_REPO/config/.env"
     if [ ! -f "$env_file" ]; then
         cp "$MVB_REPO/config/.env.example" "$env_file"
-        echo -e "${YELLOW}Created config/.env from template.${NC}"
+        chmod 600 "$env_file"
+        echo -e "${YELLOW}Created config/.env from template (permissions: owner-only).${NC}"
     fi
+    # Ensure permissions are restricted (may have been created by older version)
+    chmod 600 "$env_file"
     "${EDITOR:-vi}" "$env_file"
 }
 

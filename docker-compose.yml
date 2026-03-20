@@ -13,7 +13,6 @@ services:
       - MVB_SHARED=${MVB_SHARED:-false}
       - MVB_MAX_PANES=${MVB_MAX_PANES:-6}
       - TERM=xterm-256color
-      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - MVB_PANES=${MVB_PANES:-}
       - MVB_REPO_URL=${MVB_REPO_URL:-}
     volumes:

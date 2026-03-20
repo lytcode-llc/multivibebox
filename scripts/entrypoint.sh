@@ -47,11 +47,11 @@ if [ -n "$MVB_PANES" ]; then
     }
 
     # Hook: reset pane title whenever an application tries to change it
-    tmux set-hook -g pane-title-changed "run-shell 'title=\"\$(tmux show-option -p -t \"#{pane_id}\" -v @mvb_title 2>/dev/null)\"; [ -n \"\$title\" ] && tmux select-pane -t \"#{pane_id}\" -T \"\$title\"'"
+    tmux set-hook -g pane-title-changed "run-shell 'title=\"\$(tmux show-option -p -t \"#{pane_id}\" -v @mvb_title 2>/dev/null)\" && [ -n \"\$title\" ] && tmux select-pane -t \"#{pane_id}\" -T \"\$title\" 2>/dev/null || true'"
 
-    # First pane (already exists in new session)
+    # First pane: kill the default shell and respawn with agent command
     IFS='|' read -r first_agent first_workdir first_pane_name <<< "${PANE_SPECS[0]}"
-    tmux send-keys -t mvb:main "MVB_PANE_INDEX=0 exec /opt/mvb/scripts/agent-wrapper.sh $first_agent $first_workdir" Enter
+    tmux respawn-pane -k -t mvb:main.0 "MVB_PANE_INDEX=0 exec /opt/mvb/scripts/agent-wrapper.sh '$first_agent' '$first_workdir'"
     lock_pane_title mvb:main.0 "$first_pane_name │ $first_workdir"
     tmux select-pane -t mvb:main -P 'bg=black'
 
@@ -59,8 +59,7 @@ if [ -n "$MVB_PANES" ]; then
     for i in $(seq 1 $((PANE_COUNT - 1))); do
         IFS='|' read -r agent workdir pane_name <<< "${PANE_SPECS[$i]}"
 
-        tmux split-window -t mvb:main
-        tmux send-keys -t mvb:main "MVB_PANE_INDEX=$i exec /opt/mvb/scripts/agent-wrapper.sh $agent $workdir" Enter
+        tmux split-window -t mvb:main "MVB_PANE_INDEX=$i exec /opt/mvb/scripts/agent-wrapper.sh '$agent' '$workdir'"
         lock_pane_title mvb:main "$pane_name │ $workdir"
         # Checkerboard: odd panes get dark gray, even panes stay black
         if [ $((i % 2)) -eq 1 ]; then
@@ -165,11 +164,11 @@ lock_pane_title() {
 }
 
 # Hook: reset pane title whenever an application tries to change it
-tmux set-hook -g pane-title-changed "run-shell 'title=\"\$(tmux show-option -p -t \"#{pane_id}\" -v @mvb_title 2>/dev/null)\"; [ -n \"\$title\" ] && tmux select-pane -t \"#{pane_id}\" -T \"\$title\"'"
+tmux set-hook -g pane-title-changed "run-shell 'title=\"\$(tmux show-option -p -t \"#{pane_id}\" -v @mvb_title 2>/dev/null)\" && [ -n \"\$title\" ] && tmux select-pane -t \"#{pane_id}\" -T \"\$title\" 2>/dev/null || true'"
 
 # Set up first agent in the initial pane
 first_agent=$(echo "${AGENTS[0]}" | xargs)
-tmux send-keys -t mvb:main "cd /workspace-${first_agent}-0 && MVB_PANE_INDEX=0 exec /opt/mvb/scripts/agent-wrapper.sh $first_agent /workspace-${first_agent}-0" Enter
+tmux respawn-pane -k -t mvb:main.0 "cd '/workspace-${first_agent}-0' && MVB_PANE_INDEX=0 exec /opt/mvb/scripts/agent-wrapper.sh '${first_agent}' '/workspace-${first_agent}-0'"
 lock_pane_title mvb:main.0 "${first_agent}-0 │ /workspace-${first_agent}-0"
 tmux select-pane -t mvb:main -P 'bg=black'
 
@@ -177,8 +176,7 @@ tmux select-pane -t mvb:main -P 'bg=black'
 for i in $(seq 1 $((AGENT_COUNT - 1))); do
     agent=$(echo "${AGENTS[$i]}" | xargs)
 
-    tmux split-window -t mvb:main
-    tmux send-keys -t mvb:main "cd /workspace-${agent}-${i} && MVB_PANE_INDEX=$i exec /opt/mvb/scripts/agent-wrapper.sh $agent /workspace-${agent}-${i}" Enter
+    tmux split-window -t mvb:main "cd '/workspace-${agent}-${i}' && MVB_PANE_INDEX=$i exec /opt/mvb/scripts/agent-wrapper.sh '${agent}' '/workspace-${agent}-${i}'"
     lock_pane_title mvb:main "${agent}-${i} │ /workspace-${agent}-${i}"
     # Checkerboard: odd panes get dark gray, even panes stay black
     if [ $((i % 2)) -eq 1 ]; then
