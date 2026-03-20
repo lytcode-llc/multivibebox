@@ -20,6 +20,7 @@ services:
       - mvb-claude-state:/home/vibe/.claude
       - ${HOME}/.claude/plugins:/home/vibe/.claude/plugins:ro
       - ./notify:/notify
+      - ./open:/open
       - ./config:/config
     working_dir: /workspace
 

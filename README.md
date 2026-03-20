@@ -4,7 +4,7 @@ A Docker-based development environment that runs multiple CLI coding agents simu
 
 ## Features
 
-- Work simultaneously with AI coding agents
+- Work simultaneously with cli AI coding agents
 - Multi-project pane support
 - Bind-mount local folders
 - Git worktree isolation
@@ -12,20 +12,17 @@ A Docker-based development environment that runs multiple CLI coding agents simu
 - macOS Keychain OAuth extraction
 - Linux credentials file extraction
 - API key authentication fallback
-- Tmux pane navigation
-- Supports various CLI agents
-- VS Code integration
+- Tmux pane navigation with mouse or cli
 - Interactive branch merging
-- Multi-terminal attachment
-- Auto-restart on agent exit
+- Multi-terminal agent attachment/reattachment
+- Audio notification per pane, default >30 agent response
 - Configurable notification threshold
 - Docker volume workspaces
-- Session name auto-generation
 
 ## Supported Platforms
 
-- **macOS** — fully supported (audio via `afplay`, uses system sounds)
-- **Linux** — fully supported (audio via `paplay` for PulseAudio or `aplay` for ALSA, falls back to freedesktop system sounds)
+- **macOS**
+- **Linux**
 - **Windows** — requires [WSL 2](https://learn.microsoft.com/en-us/windows/wsl/install) with Docker Desktop configured to use the WSL 2 backend. Run all `mvb` commands from within your WSL terminal. Audio via `powershell.exe` using Windows system sounds.
 
 You can also place custom `.wav` or `.ogg` files in the `sounds/` directory, named to match the `NOTIFY_SOUND` value in your agent config (e.g., `sounds/Glass.wav`).
@@ -118,7 +115,7 @@ mvb start claude:~/Projects/frontend claude:~/Projects/backend
 # Multiple panes on the same project + others
 mvb start claude:~/Projects/frontend claude:~/Projects/frontend claude:~/Projects/api
 
-# Session name is auto-generated (frontend+backend) or set explicitly
+# Session name is auto-generated (frontend+backend) or you can set explicitly by passing name after start command
 mvb start mysession claude:~/Projects/frontend claude:~/Projects/backend
 ```
 
@@ -130,7 +127,8 @@ mvb list                         # List all projects
 mvb attach                       # Attach to full tmux session
 mvb attach claude-0              # Attach to a specific pane
 mvb merge                        # Interactive merge of agent branches
-mvb open claude src/main.py      # Open a specific file in VS Code
+mvb-open path/to/file/index.ts   # Open a specific file in VS Code
+# (to select/copy file path in mvb pane on Mac, fn+Option click and drag, Command+v to paste)
 mvb config                       # Edit .env in $EDITOR
 mvb destroy myproject            # Remove project and its volume
 ```
@@ -208,6 +206,14 @@ Open Docker Desktop and wait for it to start.
 
 ### tmux session not attaching
 - If the container is running but attach fails, try: `docker exec -it mvb-<project> tmux attach-session -t mvb`
+
+### Can't detach session so you can run mvb commands?
+
+In a new terminal window run $ docker kill $(docker ps -q --filter "name=mvb").
+_or_
+Close the terminal window containing mvb panes (don't worry about the warnings), launch new window and run $ mvb attach.
+_and_
+$ mvb stop
 
 ## License
 

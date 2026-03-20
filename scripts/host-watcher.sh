@@ -4,6 +4,8 @@
 # Supports macOS (afplay), Linux (paplay/aplay), and WSL (powershell.exe).
 
 NOTIFY_DIR="${1:-.}/notify"
+OPEN_DIR="${1:-.}/open"
+PROJECTS_DIR="${1:-.}/config/projects"
 COOLDOWN=10  # seconds between sounds per agent
 
 declare -A LAST_PLAYED
@@ -130,6 +132,86 @@ play_sound() {
     esac
 }
 
+# --- Announce pane number via text-to-speech ---
+
+announce_pane() {
+    local pane="$1"
+    case "$MVB_PLATFORM" in
+        macos)
+            say "pane $pane" &
+            ;;
+        linux)
+            if command -v espeak &>/dev/null; then
+                espeak "pane $pane" &
+            elif command -v spd-say &>/dev/null; then
+                spd-say "pane $pane" &
+            fi
+            ;;
+        wsl)
+            powershell.exe -NoProfile -c "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('pane $pane')" &
+            ;;
+    esac
+}
+
+# --- Translate container path to host path ---
+
+translate_path() {
+    local container_path="$1"
+    local host_path=""
+
+    # Search project files for path mappings
+    for pfile in "$PROJECTS_DIR"/*.json; do
+        [ -f "$pfile" ] || continue
+        local path_map
+        path_map=$(jq -r '.path_map // empty' "$pfile" 2>/dev/null)
+        [ -z "$path_map" ] && continue
+
+        # path_map format: "container=host" or "container=host;container2=host2"
+        IFS=';' read -ra mappings <<< "$path_map"
+        for mapping in "${mappings[@]}"; do
+            local cprefix="${mapping%%=*}"
+            local hprefix="${mapping#*=}"
+            if [[ "$container_path" == "$cprefix"* ]]; then
+                host_path="${hprefix}${container_path#$cprefix}"
+                echo "$host_path"
+                return
+            fi
+        done
+    done
+
+    echo ""
+}
+
+# --- Open file on host ---
+
+open_file() {
+    local host_path="$1"
+    [ -z "$host_path" ] && return
+    [ ! -f "$host_path" ] && return
+
+    case "$MVB_PLATFORM" in
+        macos)
+            if [ -n "$EDITOR" ]; then
+                $EDITOR "$host_path" &
+            else
+                open -t "$host_path" &
+            fi
+            ;;
+        linux)
+            if [ -n "$EDITOR" ]; then
+                $EDITOR "$host_path" &
+            elif command -v xdg-open &>/dev/null; then
+                xdg-open "$host_path" &
+            fi
+            ;;
+        wsl)
+            local win_path
+            win_path=$(wslpath -w "$host_path" 2>/dev/null || echo "$host_path")
+            cmd.exe /c start "" "$win_path" &
+            ;;
+    esac
+}
+
 # --- Load agent sound preferences from config ---
 
 load_agent_sounds() {
@@ -167,27 +249,48 @@ if [ "$MVB_PLATFORM" = "unknown" ]; then
 fi
 echo "Press Ctrl-C to stop."
 
-mkdir -p "$NOTIFY_DIR"
+mkdir -p "$NOTIFY_DIR" "$OPEN_DIR"
 
 while true; do
     # Check for new event files
     for event_file in "$NOTIFY_DIR"/*; do
         [ -f "$event_file" ] || continue
 
-        agent_name=$(cat "$event_file" 2>/dev/null)
+        event_data=$(cat "$event_file" 2>/dev/null)
         rm -f "$event_file"
 
-        [ -z "$agent_name" ] && continue
+        [ -z "$event_data" ] && continue
 
-        # Debounce: check cooldown
+        # Parse agent_name:pane_index
+        agent_name="${event_data%%:*}"
+        pane_index="${event_data#*:}"
+
+        # Debounce: check cooldown (per pane)
+        debounce_key="${agent_name}-${pane_index}"
         now=$(date +%s)
-        last=${LAST_PLAYED["$agent_name"]:-0}
+        last=${LAST_PLAYED["$debounce_key"]:-0}
         elapsed=$((now - last))
 
         if [ "$elapsed" -ge "$COOLDOWN" ]; then
             sound="${AGENT_SOUNDS[$agent_name]:-$DEFAULT_SOUND}"
             play_sound "$sound"
-            LAST_PLAYED["$agent_name"]=$now
+            announce_pane "$pane_index"
+            LAST_PLAYED["$debounce_key"]=$now
+        fi
+    done
+
+    # Check for file-open requests
+    for open_file_event in "$OPEN_DIR"/*; do
+        [ -f "$open_file_event" ] || continue
+
+        container_path=$(cat "$open_file_event" 2>/dev/null)
+        rm -f "$open_file_event"
+
+        [ -z "$container_path" ] && continue
+
+        host_path=$(translate_path "$container_path")
+        if [ -n "$host_path" ]; then
+            open_file "$host_path"
         fi
     done
 

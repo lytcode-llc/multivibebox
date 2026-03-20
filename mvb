@@ -72,14 +72,17 @@ project_file() {
 
 # Save project metadata
 save_project() {
-    local name="$1" path="$2" shared="$3" agents="$4"
+    local name="$1" path="$2" shared="$3" agents="$4" mode="${5:-single}" pane_specs="${6:-}" path_map="${7:-}"
     mkdir -p "$MVB_PROJECTS_DIR"
     cat > "$(project_file "$name")" <<PROJ
 {
   "name": "$name",
+  "mode": "$mode",
   "path": "$path",
   "shared": $shared,
   "agents": "$agents",
+  "pane_specs": "$pane_specs",
+  "path_map": "$path_map",
   "last_used": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 PROJ
@@ -125,7 +128,7 @@ container_name() {
 
 # Check if container is running
 is_running() {
-    docker ps --format '{{.Names}}' | grep -q "^$(container_name "$1")$"
+    docker ps --format '{{.Names}}' | grep -q "mvb.*${1:-default}"
 }
 
 # ---- Commands ----
@@ -171,6 +174,23 @@ cmd_start() {
     # Detect mode: multi-project (pane specs) vs single-project (--path/--agents)
     if [ ${#pane_specs[@]} -gt 0 ]; then
         cmd_start_multi "$session" "$shared" "${pane_specs[@]}"
+    elif [ -n "$session" ] && [ -z "$workspace_path" ] && [ -z "$agents" ]; then
+        # No pane specs or flags — check if this is a saved multi-project session
+        local existing
+        existing=$(load_project "$session")
+        if [ -n "$existing" ] && [ "$(echo "$existing" | jq -r '.mode // "single"')" = "multi" ]; then
+            local saved_specs
+            saved_specs=$(echo "$existing" | jq -r '.pane_specs // empty')
+            if [ -n "$saved_specs" ]; then
+                echo -e "${BLUE}Resuming multi-project session: $session${NC}"
+                IFS=',' read -ra pane_specs <<< "$saved_specs"
+                local saved_shared
+                saved_shared=$(echo "$existing" | jq -r '.shared // "false"')
+                cmd_start_multi "$session" "$saved_shared" "${pane_specs[@]}"
+                return
+            fi
+        fi
+        cmd_start_single "$session" "$workspace_path" "$shared" "$agents"
     else
         cmd_start_single "$session" "$workspace_path" "$shared" "$agents"
     fi
@@ -232,7 +252,13 @@ cmd_start_single() {
     echo -e "Agents: ${GREEN}$agents${NC}"
     echo -e "Mode: ${GREEN}$([ "$shared" = "true" ] && echo "shared" || echo "worktree")${NC}"
 
-    save_project "$project" "$workspace_path" "$shared" "$agents"
+    # Build path map for file-open bridge
+    local path_map=""
+    if [ -n "$workspace_path" ]; then
+        path_map="/workspace=${workspace_path}"
+    fi
+
+    save_project "$project" "$workspace_path" "$shared" "$agents" "single" "" "$path_map"
 
     start_host_watcher
 
@@ -360,6 +386,25 @@ cmd_start_multi() {
         echo -e "  Pane $i: ${GREEN}${agent}${NC} → ${host_path}"
     done
 
+    # Save project metadata (join pane specs with commas for storage)
+    local specs_str=""
+    for spec in "${pane_specs[@]}"; do
+        specs_str="${specs_str:+$specs_str,}$spec"
+    done
+
+    # Build path map from known host→container mappings (semicolon-separated)
+    local path_map=""
+    local idx=0
+    while IFS= read -r hp; do
+        [ -z "$hp" ] && continue
+        local cp
+        cp=$(echo "$known_container_paths" | sed -n "$((idx + 1))p")
+        path_map="${path_map:+$path_map;}${cp}=${hp}"
+        idx=$((idx + 1))
+    done <<< "$known_host_paths"
+
+    save_project "$session" "" "$shared" "" "multi" "$specs_str" "$path_map"
+
     start_host_watcher
 
     local claude_oauth_token
@@ -428,7 +473,7 @@ cmd_stop() {
 
     # Stop all mvb containers
     local containers
-    containers=$(docker ps --format '{{.Names}}' | grep "^mvb-" || true)
+    containers=$(docker ps --format '{{.Names}}' | grep "mvb" || true)
     if [ -n "$containers" ]; then
         echo "$containers" | xargs docker stop
         echo -e "${GREEN}Containers stopped.${NC}"
@@ -467,10 +512,26 @@ cmd_list() {
             running="${RED}○ stopped${NC}"
         fi
 
+        local mode
+        mode=$(jq -r '.mode // "single"' "$pfile")
+        local pane_specs
+        pane_specs=$(jq -r '.pane_specs // empty' "$pfile")
+
         echo -e "  $running  ${GREEN}$name${NC}"
-        echo -e "           Agents: $agents"
-        echo -e "           Path: ${path:-Docker volume}"
-        echo -e "           Mode: $([ "$shared" = "true" ] && echo "shared" || echo "worktree")"
+        if [ "$mode" = "multi" ] && [ -n "$pane_specs" ]; then
+            echo -e "           Mode: multi-project"
+            echo -e "           Panes:"
+            IFS=',' read -ra specs <<< "$pane_specs"
+            for spec in "${specs[@]}"; do
+                local a="${spec%%:*}"
+                local p="${spec#*:}"
+                echo -e "             ${a} → ${p}"
+            done
+        else
+            echo -e "           Agents: ${agents:-claude}"
+            echo -e "           Path: ${path:-Docker volume}"
+            echo -e "           Mode: $([ "$shared" = "true" ] && echo "shared" || echo "worktree")"
+        fi
         echo -e "           Last used: $last_used"
         echo ""
     done
@@ -481,41 +542,80 @@ cmd_list() {
 }
 
 cmd_attach() {
-    local agent="${1:-}"
-    local project=""
+    local target="${1:-}"
 
-    # Find running container
-    local container
-    container=$(docker ps --format '{{.Names}}' | grep "^mvb-" | head -1)
-    if [ -z "$container" ]; then
-        echo -e "${RED}No running multivibebox container found.${NC}"
+    # Get all running mvb containers
+    local -a containers=()
+    while IFS= read -r name; do
+        [ -n "$name" ] && containers+=("$name")
+    done < <(docker ps --format '{{.Names}}' | grep "mvb")
+
+    if [ ${#containers[@]} -eq 0 ]; then
+        echo -e "${RED}No running multivibebox sessions found.${NC}"
         exit 1
     fi
 
-    if [ -z "$agent" ]; then
-        # Attach to full tmux session
-        docker exec -it "$container" tmux attach-session -t mvb
-    else
-        # Find the pane index for this agent and attach to it
-        local pane_index
-        pane_index=$(docker exec "$container" tmux list-panes -t mvb -F "#{pane_index}:#{pane_title}" 2>/dev/null \
-            | grep ":${agent}$" | cut -d: -f1)
+    local container=""
 
-        if [ -z "$pane_index" ]; then
-            echo -e "${RED}Agent '$agent' not found in running session.${NC}"
-            echo "Available agents:"
-            docker exec "$container" tmux list-panes -t mvb -F "  #{pane_title}" 2>/dev/null
+    if [ -n "$target" ]; then
+        # Try to match target as a session/container name
+        for c in "${containers[@]}"; do
+            if [[ "$c" == *"$target"* ]]; then
+                container="$c"
+                break
+            fi
+        done
+
+        if [ -z "$container" ]; then
+            # Target might be a pane name — search all containers
+            for c in "${containers[@]}"; do
+                local pane_match
+                pane_match=$(docker exec "$c" tmux list-panes -t mvb -F "#{pane_index}:#{pane_title}" 2>/dev/null \
+                    | grep "$target" | head -1 | cut -d: -f1)
+                if [ -n "$pane_match" ]; then
+                    container="$c"
+                    docker exec -it "$container" bash -c "tmux select-pane -t mvb:main.${pane_match} && tmux attach-session -t mvb"
+                    return
+                fi
+            done
+            echo -e "${RED}No session or pane matching '$target' found.${NC}"
+            echo ""
+            echo "Running sessions:"
+            for c in "${containers[@]}"; do
+                echo -e "  ${GREEN}${c}${NC}"
+            done
             exit 1
         fi
-
-        # Select the pane and attach
-        docker exec -it "$container" bash -c "tmux select-pane -t mvb:main.${pane_index} && tmux attach-session -t mvb"
+    elif [ ${#containers[@]} -eq 1 ]; then
+        container="${containers[0]}"
+    else
+        # Multiple sessions — prompt user to select
+        echo -e "${BLUE}Multiple sessions running:${NC}"
+        echo ""
+        for i in "${!containers[@]}"; do
+            local c="${containers[$i]}"
+            local panes
+            panes=$(docker exec "$c" tmux list-panes -t mvb -F "#{pane_title}" 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+            echo -e "  ${GREEN}$((i + 1)))${NC} ${c}"
+            [ -n "$panes" ] && echo -e "     Panes: $panes"
+        done
+        echo ""
+        echo -n "Select session [1-${#containers[@]}]: "
+        read -r choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#containers[@]} ]; then
+            container="${containers[$((choice - 1))]}"
+        else
+            echo "Invalid selection."
+            exit 1
+        fi
     fi
+
+    docker exec -it "$container" tmux attach-session -t mvb
 }
 
 cmd_merge() {
     local container
-    container=$(docker ps --format '{{.Names}}' | grep "^mvb-" | head -1)
+    container=$(docker ps --format '{{.Names}}' | grep "mvb" | head -1)
     if [ -z "$container" ]; then
         echo -e "${RED}No running multivibebox container found.${NC}"
         exit 1
@@ -585,7 +685,7 @@ cmd_open() {
 
     # Find running container
     local container
-    container=$(docker ps --format '{{.Names}}' | grep "^mvb-" | head -1)
+    container=$(docker ps --format '{{.Names}}' | grep "mvb" | head -1)
     local project_name="${container#mvb-}"
 
     # Load project metadata

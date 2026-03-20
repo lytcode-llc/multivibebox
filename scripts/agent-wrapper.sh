@@ -2,8 +2,15 @@
 # Launches an agent in a pane with auto-restart on exit
 
 AGENT_NAME="${1:-claude}"
+AGENT_WORKDIR="${2:-}"
 AGENT_CONF="/config/agents/${AGENT_NAME}.conf"
 FALLBACK_CONF="/opt/mvb/config/agents/${AGENT_NAME}.conf"
+PANE_INDEX="${MVB_PANE_INDEX:-0}"
+
+# cd to workdir if provided
+if [ -n "$AGENT_WORKDIR" ]; then
+    cd "$AGENT_WORKDIR"
+fi
 
 # Source agent config
 if [ -f "$AGENT_CONF" ]; then
@@ -61,7 +68,7 @@ CCEOF
         "hooks": [
           {
             "type": "command",
-            "command": "/opt/mvb/scripts/notify-hook.sh start $AGENT_NAME"
+            "command": "/opt/mvb/scripts/notify-hook.sh start $AGENT_NAME $PANE_INDEX"
           }
         ]
       }
@@ -72,7 +79,7 @@ CCEOF
         "hooks": [
           {
             "type": "command",
-            "command": "/opt/mvb/scripts/notify-hook.sh notify $AGENT_NAME"
+            "command": "/opt/mvb/scripts/notify-hook.sh notify $AGENT_NAME $PANE_INDEX"
           }
         ]
       }

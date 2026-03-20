@@ -18,26 +18,47 @@ if [ -n "$MVB_PANES" ]; then
     # Start tmux session
     tmux -f /opt/mvb/config/tmux.conf new-session -d -s mvb -n main
 
+    # Helper: set pane title and lock it against application overrides
+    lock_pane_title() {
+        local pane="$1" title="$2"
+        tmux select-pane -t "$pane" -T "$title"
+        tmux set-option -p -t "$pane" @mvb_title "$title"
+    }
+
+    # Hook: reset pane title whenever an application tries to change it
+    tmux set-hook -g pane-title-changed "run-shell 'title=\"\$(tmux show-option -p -t \"#{pane_id}\" -v @mvb_title 2>/dev/null)\"; [ -n \"\$title\" ] && tmux select-pane -t \"#{pane_id}\" -T \"\$title\"'"
+
     # First pane (already exists in new session)
     IFS='|' read -r first_agent first_workdir first_pane_name <<< "${PANE_SPECS[0]}"
-    tmux send-keys -t mvb:main "cd $first_workdir && exec /opt/mvb/scripts/agent-wrapper.sh $first_agent" Enter
-    tmux select-pane -t mvb:main -T "$first_pane_name │ $first_workdir"
+    tmux send-keys -t mvb:main "MVB_PANE_INDEX=0 exec /opt/mvb/scripts/agent-wrapper.sh $first_agent $first_workdir" Enter
+    lock_pane_title mvb:main.0 "$first_pane_name │ $first_workdir"
+    tmux select-pane -t mvb:main -P 'bg=black'
 
     # Remaining panes
     for i in $(seq 1 $((PANE_COUNT - 1))); do
         IFS='|' read -r agent workdir pane_name <<< "${PANE_SPECS[$i]}"
 
         tmux split-window -t mvb:main
-        tmux send-keys -t mvb:main "cd $workdir && exec /opt/mvb/scripts/agent-wrapper.sh $agent" Enter
-        tmux select-pane -t mvb:main -T "$pane_name │ $workdir"
+        tmux send-keys -t mvb:main "MVB_PANE_INDEX=$i exec /opt/mvb/scripts/agent-wrapper.sh $agent $workdir" Enter
+        lock_pane_title mvb:main "$pane_name │ $workdir"
+        # Checkerboard: odd panes get dark gray, even panes stay black
+        if [ $((i % 2)) -eq 1 ]; then
+            tmux select-pane -t mvb:main -P 'bg=colour233'
+        else
+            tmux select-pane -t mvb:main -P 'bg=black'
+        fi
+
 
         # Rebalance layout after each split
         tmux select-layout -t mvb:main "$MVB_LAYOUT" 2>/dev/null || tmux select-layout -t mvb:main tiled
     done
 
-    # Select first pane and attach
+    # Select first pane and attach (loop keeps container alive on detach)
     tmux select-pane -t mvb:main.0
-    exec tmux attach-session -t mvb
+    while tmux has-session -t mvb 2>/dev/null; do
+        tmux attach-session -t mvb || sleep 1
+    done
+    exit 0
 fi
 
 # ---- Single-project mode ----
@@ -115,25 +136,42 @@ setup_workdirs
 # Start tmux session
 tmux -f /opt/mvb/config/tmux.conf new-session -d -s mvb -n main
 
+# Helper: set pane title and lock it against application overrides
+lock_pane_title() {
+    local pane="$1" title="$2"
+    tmux select-pane -t "$pane" -T "$title"
+    tmux set-option -p -t "$pane" @mvb_title "$title"
+}
+
+# Hook: reset pane title whenever an application tries to change it
+tmux set-hook -g pane-title-changed "run-shell 'title=\"\$(tmux show-option -p -t \"#{pane_id}\" -v @mvb_title 2>/dev/null)\"; [ -n \"\$title\" ] && tmux select-pane -t \"#{pane_id}\" -T \"\$title\"'"
+
 # Set up first agent in the initial pane
 first_agent=$(echo "${AGENTS[0]}" | xargs)
-tmux send-keys -t mvb:main "cd /workspace-${first_agent}-0 && exec /opt/mvb/scripts/agent-wrapper.sh $first_agent" Enter
-tmux select-pane -t mvb:main -T "${first_agent}-0 │ /workspace-${first_agent}-0"
+tmux send-keys -t mvb:main "cd /workspace-${first_agent}-0 && MVB_PANE_INDEX=0 exec /opt/mvb/scripts/agent-wrapper.sh $first_agent /workspace-${first_agent}-0" Enter
+lock_pane_title mvb:main.0 "${first_agent}-0 │ /workspace-${first_agent}-0"
+tmux select-pane -t mvb:main -P 'bg=black'
 
 # Create additional panes for remaining agents
 for i in $(seq 1 $((AGENT_COUNT - 1))); do
     agent=$(echo "${AGENTS[$i]}" | xargs)
 
     tmux split-window -t mvb:main
-    tmux send-keys -t mvb:main "cd /workspace-${agent}-${i} && exec /opt/mvb/scripts/agent-wrapper.sh $agent" Enter
-    tmux select-pane -t mvb:main -T "${agent}-${i} │ /workspace-${agent}-${i}"
+    tmux send-keys -t mvb:main "cd /workspace-${agent}-${i} && MVB_PANE_INDEX=$i exec /opt/mvb/scripts/agent-wrapper.sh $agent /workspace-${agent}-${i}" Enter
+    lock_pane_title mvb:main "${agent}-${i} │ /workspace-${agent}-${i}"
+    # Checkerboard: odd panes get dark gray, even panes stay black
+    if [ $((i % 2)) -eq 1 ]; then
+        tmux select-pane -t mvb:main -P 'bg=colour233'
+    else
+        tmux select-pane -t mvb:main -P 'bg=black'
+    fi
 
     # Rebalance layout after each split
     tmux select-layout -t mvb:main "$MVB_LAYOUT" 2>/dev/null || tmux select-layout -t mvb:main tiled
 done
 
-# Select first pane
+# Select first pane and attach (loop keeps container alive on detach)
 tmux select-pane -t mvb:main.0
-
-# Attach to session
-exec tmux attach-session -t mvb
+while tmux has-session -t mvb 2>/dev/null; do
+    tmux attach-session -t mvb || sleep 1
+done

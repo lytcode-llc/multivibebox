@@ -9,8 +9,9 @@
 
 ACTION="$1"
 AGENT_NAME="${2:-claude}"
+PANE_INDEX="${3:-0}"
 MIN_DURATION="${MVB_NOTIFY_MIN_DURATION:-30}"
-STATE_FILE="/tmp/mvb-prompt-start-${AGENT_NAME}"
+STATE_FILE="/tmp/mvb-prompt-start-${AGENT_NAME}-${PANE_INDEX}"
 
 case "$ACTION" in
     start)
@@ -33,7 +34,7 @@ case "$ACTION" in
         # Only notify if response took longer than threshold
         if [ "$elapsed" -ge "$MIN_DURATION" ]; then
             timestamp=$(date +%s%N)
-            echo "$AGENT_NAME" > "/notify/${AGENT_NAME}-${timestamp}"
+            echo "${AGENT_NAME}:${PANE_INDEX}" > "/notify/${AGENT_NAME}-${PANE_INDEX}-${timestamp}"
         fi
         ;;
 esac
