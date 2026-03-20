@@ -15,9 +15,10 @@ services:
       - TERM=xterm-256color
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - MVB_PANES=${MVB_PANES:-}
+      - MVB_REPO_URL=${MVB_REPO_URL:-}
     volumes:
       - ${MVB_WORKSPACE_VOLUME:-mvb-default}:/workspace
-      - mvb-claude-state:/home/vibe/.claude
+      - mvb-home:/home/vibe
       - ${HOME}/.claude/plugins:/home/vibe/.claude/plugins:ro
       - ./notify:/notify
       - ./open:/open
@@ -26,4 +27,4 @@ services:
 
 volumes:
   mvb-default:
-  mvb-claude-state:
+  mvb-home:

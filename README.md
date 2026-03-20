@@ -4,20 +4,23 @@ A Docker-based development environment that runs multiple CLI coding agents simu
 
 ## Features
 
-- Work simultaneously with cli AI coding agents
+- Work simultaneously with CLI AI coding agents
 - Multi-project pane support
-- Bind-mount local folders
-- Git worktree isolation
-- Conversation history persistence
+- Bind-mount local folders or clone from remote repos
+- Git worktree isolation per agent
+- Conversation persistence for all agents across restarts
+- SSH agent forwarding for private repos
 - macOS Keychain OAuth extraction
 - Linux credentials file extraction
 - API key authentication fallback
-- Tmux pane navigation with mouse or cli
+- Tmux pane navigation with mouse or keyboard
 - Interactive branch merging
 - Multi-terminal agent attachment/reattachment
-- Audio notification per pane, default >30 agent response
+- Audio notification + spoken pane number per pane
 - Configurable notification threshold
 - Docker volume workspaces
+- Open container project files in host default editor via `mvb-open`
+- Visual pane differentiation (checkerboard backgrounds, active pane highlighting)
 
 ## Supported Platforms
 
@@ -48,10 +51,11 @@ You can also place custom `.wav` or `.ogg` files in the `sounds/` directory, nam
 │  │  Claude Code hooks → writes to /notify             │    │
 │  │                                                   │    │
 │  │  Volumes:                                         │    │
-│  │    /workspace ← bind mount OR named volume        │    │
-│  │    ~/.claude  ← named volume (conversation state) │    │
-│  │    /notify   ← bind mount (notification bridge)   │    │
-│  │    /config   ← bind mount (API keys, agent defs)  │    │
+│  │    /workspace  ← bind mount, volume, or git clone │    │
+│  │    /home/vibe  ← named volume (all agent state)   │    │
+│  │    /notify     ← bind mount (notification bridge) │    │
+│  │    /open       ← bind mount (file-open bridge)    │    │
+│  │    /config     ← bind mount (API keys, agent defs)│    │
 │  └───────────────────────────────────────────────────┘    │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -77,8 +81,14 @@ make install
 mvb config
 # → Set ANTHROPIC_API_KEY=sk-ant-...
 
-# 4. Start a project with a local folder
+# 4. Start a project with a local folder (myproject argument is optional, defaults to directory or repo name). Uses Claude Code by default. If there are more than one agent in MVB_AGENTS, a pane for each agent opens with git worktree.
 mvb start myproject --path ~/Projects/myproject
+
+# Or clone a remote repo (uses SSH agent forwarding for private repos)
+mvb start myproject --repo git@github.com:user/repo.git
+
+# Or start multiple projects with your specific configured agents
+mvb mvb start claude:~/Projects/project1 claude:~/Projects/project2
 
 # 5. (Optional) Open another terminal and attach to a specific agent
 mvb attach claude-0
@@ -94,7 +104,10 @@ All panes share one workspace. Each pane gets a stable path (`/workspace-<agent>
 # With a local folder (bind mount — edit in your IDE simultaneously)
 mvb start myproject --path ~/Projects/myproject
 
-# Standalone (Docker volume)
+# Clone a remote repo into a Docker volume (SSH agent forwarding for private repos)
+mvb start myproject --repo git@github.com:user/repo.git
+
+# Standalone (Docker volume), a pane for each config'd agent
 mvb start myproject
 
 # Multiple agents in parallel
@@ -112,26 +125,34 @@ Each pane gets its own project directory. Use `agent:path` pane specs:
 # Two different projects
 mvb start claude:~/Projects/frontend claude:~/Projects/backend
 
-# Multiple panes on the same project + others
+# Multiple panes on the same project + others, project name is auto-generated (frontend+frontend+api)
 mvb start claude:~/Projects/frontend claude:~/Projects/frontend claude:~/Projects/api
 
-# Session name is auto-generated (frontend+backend) or you can set explicitly by passing name after start command
-mvb start mysession claude:~/Projects/frontend claude:~/Projects/backend
+# or you can set project name explicitly
+mvb start myproject claude:~/Projects/frontend claude:~/Projects/backend
 ```
 
 ### Other commands
 
 ```bash
 mvb stop                         # Stop container + host watcher
-mvb list                         # List all projects
-mvb attach                       # Attach to full tmux session
-mvb attach claude-0              # Attach to a specific pane
-mvb merge                        # Interactive merge of agent branches
-mvb-open path/to/file/index.ts   # Open a specific file in VS Code
-# (to select/copy file path in mvb pane on Mac, fn+Option click and drag, Command+v to paste)
+mvb list                         # List all projects (with status, agents, repo URL)
+mvb attach                       # Attach to tmux session (interactive selection if multiple running)
+mvb attach claude-0              # Attach to a specific pane by name
+mvb merge                        # Interactive merge of agent worktree branches
 mvb config                       # Edit .env in $EDITOR
-mvb destroy myproject            # Remove project and its volume
+mvb destroy myproject            # Remove project and its Docker volume
 ```
+
+### Opening files from inside a container pane
+
+Use `mvb-open` inside any agent pane to open a file in your host's default editor for that file type:
+
+```bash
+mvb-open path/to/file/index.ts
+```
+
+To select/copy a file path in an mvb pane on Mac: fn+Option click and drag, then Command+V to paste.
 
 ### Agent isolation modes
 
@@ -140,17 +161,15 @@ mvb destroy myproject            # Remove project and its volume
 
 ### Conversation persistence
 
-Claude Code conversation history is persisted across container restarts via a Docker volume. When a pane starts and prior conversation history exists for that workspace path, it automatically resumes with `--continue`.
+All agent state (conversation history, config, shell history) is persisted across container restarts via a Docker volume mounted at `/home/vibe`. When a Claude Code pane starts and prior conversation history exists for that workspace path, it automatically resumes with `--continue`. Other agents benefit from the same persistence for whatever state they store in the home directory.
 
 ## Audio Notifications
 
-When a Claude Code response takes longer than 30 seconds, you'll hear a system sound. Each agent can have its own sound. The threshold is configurable via `MVB_NOTIFY_MIN_DURATION`.
+When an agent response takes longer than 30 seconds, you'll hear a system sound followed by a spoken announcement of the pane number (e.g., "pane 2"). Each agent can have its own sound. The threshold is configurable via `MVB_NOTIFY_MIN_DURATION`.
 
-The notification bridge works by:
-1. **In-container**: Claude Code hooks (`UserPromptSubmit` + `Notification`) track response duration and write event files to `/notify/` when the threshold is exceeded
-2. **On host**: `host-watcher.sh` watches the notify directory and plays sounds (`afplay` on macOS, `paplay`/`aplay` on Linux, `powershell.exe` on WSL)
+Text-to-speech uses `say` on macOS, `espeak`/`spd-say` on Linux, and PowerShell on WSL.
 
-## Adding a Custom Agent
+## Adding a Coding Agent
 
 1. Create a config file in `config/agents/`:
 
@@ -212,7 +231,8 @@ Open Docker Desktop and wait for it to start.
 In a new terminal window run $ docker kill $(docker ps -q --filter "name=mvb").
 _or_
 Close the terminal window containing mvb panes (don't worry about the warnings), launch new window and run $ mvb attach.
-_and_
+
+After either step..
 $ mvb stop
 
 ## License

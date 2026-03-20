@@ -194,7 +194,7 @@ open_file() {
             if [ -n "$EDITOR" ]; then
                 $EDITOR "$host_path" &
             else
-                open -t "$host_path" &
+                open "$host_path" &
             fi
             ;;
         linux)

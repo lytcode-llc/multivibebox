@@ -1,6 +1,27 @@
 #!/bin/bash
 set -e
 
+# Initialize home directory from skeleton if empty (first run with fresh volume)
+if [ ! -f "$HOME/.bashrc" ]; then
+    echo "Initializing home directory from skeleton..."
+    cp -a /opt/mvb/skel/. "$HOME/"
+fi
+
+# Clone repo into workspace if MVB_REPO_URL is set
+if [ -n "${MVB_REPO_URL:-}" ]; then
+    if [ -d /workspace/.git ]; then
+        echo "Repo already cloned, pulling latest..."
+        cd /workspace
+        git pull --ff-only 2>/dev/null || echo "Warning: git pull failed (diverged or detached). Skipping."
+        cd /
+    elif [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
+        echo "Cloning $MVB_REPO_URL into /workspace..."
+        git clone "$MVB_REPO_URL" /workspace
+    else
+        echo "Warning: /workspace is not empty and not a git repo. Skipping clone."
+    fi
+fi
+
 MVB_LAYOUT="${MVB_LAYOUT:-tiled}"
 MVB_PROJECT="${MVB_PROJECT:-default}"
 MVB_SHARED="${MVB_SHARED:-false}"

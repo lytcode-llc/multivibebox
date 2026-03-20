@@ -12,19 +12,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-venv \
     ca-certificates \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user with fixed uid/gid for volume permission consistency
 RUN groupadd -g 1001 vibe && useradd -m -s /bin/bash -u 1001 -g 1001 vibe && \
-    mkdir -p /workspace /notify /open /config /home/vibe/.claude && \
-    chown -R vibe:vibe /workspace /notify /open /config /home/vibe/.claude
+    mkdir -p /workspace /notify /open /config /home/vibe/.claude /home/vibe/.ssh && \
+    chown -R vibe:vibe /workspace /notify /open /config /home/vibe/.claude /home/vibe/.ssh
+
+# Pre-populate SSH known_hosts so git clone doesn't prompt for host verification
+RUN ssh-keyscan -t ed25519,rsa github.com gitlab.com bitbucket.org ssh.dev.azure.com vs-ssh.visualstudio.com >> /home/vibe/.ssh/known_hosts 2>/dev/null && \
+    chown vibe:vibe /home/vibe/.ssh/known_hosts
 
 # Install Claude Code as vibe user via native installer
 # WORKDIR /tmp avoids filesystem scan hang when installing in Docker
 USER vibe
 WORKDIR /tmp
 RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/home/vibe/.local/bin:${PATH}"
 
 # --- Extensible agent install section ---
 # Aider (uncomment or add in agent config)
@@ -34,8 +38,15 @@ ENV PATH="/home/vibe/.local/bin:${PATH}"
 # RUN npm install -g @openai/codex
 # --- End agent installs ---
 
-# Copy scripts and config (need root for ownership)
+# Copy agent binaries to system path so they survive home volume mount
+# Save home skeleton for first-run initialization
 USER root
+RUN cp /home/vibe/.local/bin/claude /usr/local/bin/claude && \
+    mkdir -p /opt/mvb/skel && \
+    cp -a /home/vibe/. /opt/mvb/skel/
+ENV PATH="/home/vibe/.local/bin:/usr/local/bin:${PATH}"
+
+# Copy scripts and config
 COPY --chown=vibe:vibe scripts/ /opt/mvb/scripts/
 COPY --chown=vibe:vibe config/tmux.conf /opt/mvb/config/tmux.conf
 COPY --chown=vibe:vibe config/agents/ /opt/mvb/config/agents/

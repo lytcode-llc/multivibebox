@@ -21,8 +21,9 @@ usage() {
 Usage: mvb <command> [options]
 
 Commands:
-  start [session] [pane-specs...]   Start or resume a session
+  start [project] [pane-specs...]   Start or resume a project
     --path DIR                      Bind-mount a local folder (single-project mode)
+    --repo URL                      Clone a git repo into Docker volume workspace
     --shared                        All agents share one directory (no worktrees)
     --agents AGENTS                 Comma-separated agent list (single-project mode)
   stop                              Stop container and host watcher
@@ -72,7 +73,7 @@ project_file() {
 
 # Save project metadata
 save_project() {
-    local name="$1" path="$2" shared="$3" agents="$4" mode="${5:-single}" pane_specs="${6:-}" path_map="${7:-}"
+    local name="$1" path="$2" shared="$3" agents="$4" mode="${5:-single}" pane_specs="${6:-}" path_map="${7:-}" repo="${8:-}"
     mkdir -p "$MVB_PROJECTS_DIR"
     cat > "$(project_file "$name")" <<PROJ
 {
@@ -83,6 +84,7 @@ save_project() {
   "agents": "$agents",
   "pane_specs": "$pane_specs",
   "path_map": "$path_map",
+  "repo": "$repo",
   "last_used": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 PROJ
@@ -134,7 +136,7 @@ is_running() {
 # ---- Commands ----
 
 cmd_start() {
-    local session="" workspace_path="" shared="false" agents=""
+    local project="" workspace_path="" shared="false" agents="" repo_url=""
     local -a pane_specs=()
 
     # Parse arguments
@@ -142,6 +144,10 @@ cmd_start() {
         case "$1" in
             --path)
                 workspace_path="$(cd "$2" && pwd)"
+                shift 2
+                ;;
+            --repo)
+                repo_url="$2"
                 shift 2
                 ;;
             --shared)
@@ -160,8 +166,8 @@ cmd_start() {
                 # Check if this is a pane spec (contains ':')
                 if [[ "$1" == *":"* ]]; then
                     pane_specs+=("$1")
-                elif [ -z "$session" ]; then
-                    session="$1"
+                elif [ -z "$project" ]; then
+                    project="$1"
                 else
                     # Treat as pane spec without colon — assume claude:path
                     pane_specs+=("claude:$1")
@@ -173,37 +179,46 @@ cmd_start() {
 
     # Detect mode: multi-project (pane specs) vs single-project (--path/--agents)
     if [ ${#pane_specs[@]} -gt 0 ]; then
-        cmd_start_multi "$session" "$shared" "${pane_specs[@]}"
-    elif [ -n "$session" ] && [ -z "$workspace_path" ] && [ -z "$agents" ]; then
-        # No pane specs or flags — check if this is a saved multi-project session
+        cmd_start_multi "$project" "$shared" "${pane_specs[@]}"
+    elif [ -n "$project" ] && [ -z "$workspace_path" ] && [ -z "$agents" ] && [ -z "$repo_url" ]; then
+        # No pane specs or flags — check if this is a saved multi-project project
         local existing
-        existing=$(load_project "$session")
+        existing=$(load_project "$project")
         if [ -n "$existing" ] && [ "$(echo "$existing" | jq -r '.mode // "single"')" = "multi" ]; then
             local saved_specs
             saved_specs=$(echo "$existing" | jq -r '.pane_specs // empty')
             if [ -n "$saved_specs" ]; then
-                echo -e "${BLUE}Resuming multi-project session: $session${NC}"
+                echo -e "${BLUE}Resuming multi-project: $project${NC}"
                 IFS=',' read -ra pane_specs <<< "$saved_specs"
                 local saved_shared
                 saved_shared=$(echo "$existing" | jq -r '.shared // "false"')
-                cmd_start_multi "$session" "$saved_shared" "${pane_specs[@]}"
+                cmd_start_multi "$project" "$saved_shared" "${pane_specs[@]}"
                 return
             fi
         fi
-        cmd_start_single "$session" "$workspace_path" "$shared" "$agents"
+        cmd_start_single "$project" "$workspace_path" "$shared" "$agents" "$repo_url"
     else
-        cmd_start_single "$session" "$workspace_path" "$shared" "$agents"
+        cmd_start_single "$project" "$workspace_path" "$shared" "$agents" "$repo_url"
     fi
 }
 
 # Single-project mode: all panes share one workspace
 cmd_start_single() {
-    local project="$1" workspace_path="$2" shared="$3" agents="$4"
+    local project="$1" workspace_path="$2" shared="$3" agents="$4" repo_url="${5:-}"
+
+    # --repo and --path are mutually exclusive
+    if [ -n "$repo_url" ] && [ -n "$workspace_path" ]; then
+        echo -e "${RED}Cannot use --repo with --path. Use --repo for Docker volume cloning or --path for local bind mount.${NC}" >&2
+        exit 1
+    fi
 
     # Default project name
     if [ -z "$project" ]; then
         if [ -n "$workspace_path" ]; then
             project=$(basename "$workspace_path")
+        elif [ -n "$repo_url" ]; then
+            # Derive project name from repo URL (e.g., git@github.com:user/repo.git → repo)
+            project=$(basename "$repo_url" .git)
         else
             project="default"
         fi
@@ -224,6 +239,9 @@ cmd_start_single() {
         fi
         if [ -z "$agents" ]; then
             agents=$(echo "$existing" | jq -r '.agents // empty')
+        fi
+        if [ -z "$repo_url" ]; then
+            repo_url=$(echo "$existing" | jq -r '.repo // empty')
         fi
     else
         echo -e "${GREEN}Creating new project: $project${NC}"
@@ -249,6 +267,7 @@ cmd_start_single() {
         echo -e "Workspace: ${GREEN}mvb-${project}${NC} (Docker volume)"
     fi
 
+    [ -n "$repo_url" ] && echo -e "Repo: ${GREEN}$repo_url${NC}"
     echo -e "Agents: ${GREEN}$agents${NC}"
     echo -e "Mode: ${GREEN}$([ "$shared" = "true" ] && echo "shared" || echo "worktree")${NC}"
 
@@ -258,32 +277,51 @@ cmd_start_single() {
         path_map="/workspace=${workspace_path}"
     fi
 
-    save_project "$project" "$workspace_path" "$shared" "$agents" "single" "" "$path_map"
+    save_project "$project" "$workspace_path" "$shared" "$agents" "single" "" "$path_map" "$repo_url"
 
     start_host_watcher
 
     local claude_oauth_token
     claude_oauth_token=$(extract_oauth_token)
 
+    # SSH agent forwarding for private repo access
+    local ssh_args=""
+    if [ -n "$repo_url" ]; then
+        case "$(uname -s)" in
+            Darwin)
+                # macOS Docker Desktop provides a built-in SSH agent socket
+                ssh_args="-v /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock -e SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock"
+                ;;
+            Linux)
+                if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+                    ssh_args="-v $SSH_AUTH_SOCK:/tmp/ssh-agent.sock -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock"
+                else
+                    echo -e "${YELLOW}Warning: SSH_AUTH_SOCK not set. Private repos may fail. Run 'eval \$(ssh-agent) && ssh-add' first.${NC}"
+                fi
+                ;;
+        esac
+    fi
+
     cd "$MVB_REPO"
     MVB_PROJECT="$project" \
     MVB_AGENTS="$agents" \
     MVB_SHARED="$shared" \
     MVB_WORKSPACE_VOLUME="$volume_spec" \
+    MVB_REPO_URL="$repo_url" \
     CLAUDE_CODE_OAUTH_TOKEN="$claude_oauth_token" \
-    docker compose run --rm --service-ports mvb
+    docker compose run --rm --service-ports $ssh_args mvb
 }
 
 # Multi-project mode: each pane spec gets its own workspace
 cmd_start_multi() {
-    local session="$1" shared="$2"
+    local project="$1" shared="$2"
     shift 2
     local -a pane_specs=("$@")
 
     load_env
 
-    # Auto-generate session name from unique project names if not provided
-    if [ -z "$session" ]; then
+    # Auto-generate project name from unique directory names if not provided
+    if [ -z "$project" ]; then
         local names=""
         for spec in "${pane_specs[@]}"; do
             local p="${spec#*:}"
@@ -296,7 +334,7 @@ cmd_start_multi() {
                 *) names="${names:+$names+}$n" ;;
             esac
         done
-        session="$names"
+        project="$names"
     fi
 
     local pane_count=${#pane_specs[@]}
@@ -310,13 +348,13 @@ cmd_start_multi() {
     fi
 
     # Check if already running
-    if is_running "$session"; then
-        echo -e "${YELLOW}Session $session is already running. Attaching...${NC}"
+    if is_running "$project"; then
+        echo -e "${YELLOW}Project $project is already running. Attaching...${NC}"
         cmd_attach
         return
     fi
 
-    echo -e "${BLUE}Starting multi-project session: $session${NC}"
+    echo -e "${BLUE}Starting multi-project: $project${NC}"
     echo -e "Panes: ${GREEN}$pane_count${NC}"
 
     # Build volume mounts and pane config
@@ -403,7 +441,7 @@ cmd_start_multi() {
         idx=$((idx + 1))
     done <<< "$known_host_paths"
 
-    save_project "$session" "" "$shared" "" "multi" "$specs_str" "$path_map"
+    save_project "$project" "" "$shared" "" "multi" "$specs_str" "$path_map"
 
     start_host_watcher
 
@@ -412,7 +450,7 @@ cmd_start_multi() {
 
     # Launch container with dynamic volume mounts
     cd "$MVB_REPO"
-    MVB_PROJECT="$session" \
+    MVB_PROJECT="$project" \
     MVB_PANES="$mvb_panes" \
     MVB_SHARED="$shared" \
     MVB_WORKSPACE_VOLUME="mvb-default" \
@@ -531,6 +569,9 @@ cmd_list() {
             echo -e "           Agents: ${agents:-claude}"
             echo -e "           Path: ${path:-Docker volume}"
             echo -e "           Mode: $([ "$shared" = "true" ] && echo "shared" || echo "worktree")"
+            local repo
+            repo=$(jq -r '.repo // empty' "$pfile")
+            [ -n "$repo" ] && echo -e "           Repo: $repo"
         fi
         echo -e "           Last used: $last_used"
         echo ""
