@@ -16,7 +16,17 @@ if [ -n "${MVB_REPO_URL:-}" ]; then
         cd /
     elif [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
         echo "Cloning $MVB_REPO_URL into /workspace..."
-        git clone "$MVB_REPO_URL" /workspace
+        # Disable git hooks on clone to prevent automatic execution of malicious scripts
+        git clone --config core.hooksPath=/dev/null "$MVB_REPO_URL" /workspace
+
+        # Warn about files that could influence agent behavior
+        cd /workspace
+        for f in CLAUDE.md .claude AGENTS.md GEMINI.md .cursorrules .aider .github/copilot-instructions.md; do
+            if [ -e "$f" ]; then
+                echo "NOTICE: Repo contains $f — review before trusting agent output."
+            fi
+        done
+        cd /
     else
         echo "Warning: /workspace is not empty and not a git repo. Skipping clone."
     fi

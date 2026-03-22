@@ -206,6 +206,20 @@ Edit `config/.env`:
 | `MVB_NOTIFY_MIN_DURATION` | `30` | Minimum response time (seconds) before playing a notification sound |
 | `MVB_NOTIFY_COOLDOWN` | `10` | Seconds between notification sounds per agent |
 
+## Security
+
+### Remote repo cloning
+
+When using `--repo` to clone a remote repository, mvb applies protections against automatic code execution and warns about files that could influence agent behavior. Review any notices printed after cloning before trusting agent output.
+
+Private repos authenticate via SSH agent forwarding. Your SSH keys never enter the container.
+
+### Credentials
+
+- API keys are stored in `config/.env` with owner-only permissions (600)
+- OAuth tokens are passed via mounted secret files, not environment variables
+- Agent install commands are restricted to known package managers (pip, npm, apt-get, brew)
+
 ## Troubleshooting
 
 ### Docker not running
