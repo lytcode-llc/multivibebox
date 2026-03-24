@@ -15,10 +15,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 20 from NodeSource (Debian bookworm ships Node 18, too old for gemini-cli)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user with fixed uid/gid for volume permission consistency
 RUN groupadd -g 1001 vibe && useradd -m -s /bin/bash -u 1001 -g 1001 vibe && \
     mkdir -p /workspace /notify /open /config /home/vibe/.claude /home/vibe/.ssh && \
     chown -R vibe:vibe /workspace /notify /open /config /home/vibe/.claude /home/vibe/.ssh
+
+# Configure npm global prefix to a vibe-owned directory so npm install -g works without sudo
+RUN mkdir -p /opt/npm-global/bin \
+    && chown -R vibe:vibe /opt/npm-global
+ENV NPM_CONFIG_PREFIX=/opt/npm-global
+ENV PATH="/opt/npm-global/bin:$PATH"
 
 # Pre-populate SSH known_hosts so git clone doesn't prompt for host verification
 RUN ssh-keyscan -t ed25519,rsa github.com gitlab.com bitbucket.org ssh.dev.azure.com vs-ssh.visualstudio.com >> /home/vibe/.ssh/known_hosts 2>/dev/null && \

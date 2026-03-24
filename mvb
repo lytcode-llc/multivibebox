@@ -142,6 +142,33 @@ is_running() {
     docker ps --format '{{.Names}}' | grep -q "mvb.*${1:-default}"
 }
 
+# Ensure Docker daemon is running; on macOS, start Docker Desktop if needed
+ensure_docker_running() {
+    if docker info >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [ "$(uname -s)" = "Darwin" ]; then
+        echo "Docker Desktop is not running. Starting it..."
+        open -a Docker
+        local attempts=0
+        while ! docker info >/dev/null 2>&1; do
+            sleep 2
+            attempts=$((attempts + 1))
+            if [ "$attempts" -ge 30 ]; then
+                echo -e "${RED}Timed out waiting for Docker Desktop to start.${NC}" >&2
+                exit 1
+            fi
+            echo -n "."
+        done
+        echo ""
+        echo -e "${GREEN}Docker Desktop is ready.${NC}"
+    else
+        echo -e "${RED}Docker is not running. Please start it and try again.${NC}" >&2
+        exit 1
+    fi
+}
+
 # ---- Commands ----
 
 cmd_start() {
@@ -185,6 +212,8 @@ cmd_start() {
                 ;;
         esac
     done
+
+    ensure_docker_running
 
     # Detect mode: multi-project (pane specs) vs single-project (--path/--agents)
     if [ ${#pane_specs[@]} -gt 0 ]; then

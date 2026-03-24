@@ -8,8 +8,23 @@ OPEN_DIR="${1:-.}/open"
 PROJECTS_DIR="${1:-.}/config/projects"
 COOLDOWN=10  # seconds between sounds per agent
 
-declare -A LAST_PLAYED
-declare -A AGENT_SOUNDS
+MVB_TMP_DIR="/tmp/mvb-watcher-$$"
+mkdir -p "$MVB_TMP_DIR"
+trap 'rm -rf "$MVB_TMP_DIR"' EXIT
+
+get_agent_sound() {
+    local f="$MVB_TMP_DIR/sound_${1}"
+    if [ -f "$f" ]; then cat "$f"; else echo "$DEFAULT_SOUND"; fi
+}
+
+get_last_played() {
+    local f="$MVB_TMP_DIR/last_${1}"
+    if [ -f "$f" ]; then cat "$f"; else echo 0; fi
+}
+
+set_last_played() {
+    echo "$2" > "$MVB_TMP_DIR/last_${1}"
+}
 
 # --- Platform detection ---
 
@@ -232,7 +247,7 @@ load_agent_sounds() {
                 local resolved
                 resolved=$(resolve_sound "$sound")
                 if [ -n "$resolved" ]; then
-                    AGENT_SOUNDS["$name"]="$resolved"
+                    echo "$resolved" > "$MVB_TMP_DIR/sound_${name}"
                 fi
             fi
         done
@@ -268,14 +283,14 @@ while true; do
         # Debounce: check cooldown (per pane)
         debounce_key="${agent_name}-${pane_index}"
         now=$(date +%s)
-        last=${LAST_PLAYED["$debounce_key"]:-0}
+        last=$(get_last_played "$debounce_key")
         elapsed=$((now - last))
 
         if [ "$elapsed" -ge "$COOLDOWN" ]; then
-            sound="${AGENT_SOUNDS[$agent_name]:-$DEFAULT_SOUND}"
+            sound=$(get_agent_sound "$agent_name")
             play_sound "$sound"
             announce_pane "$pane_index"
-            LAST_PLAYED["$debounce_key"]=$now
+            set_last_played "$debounce_key" "$now"
         fi
     done
 

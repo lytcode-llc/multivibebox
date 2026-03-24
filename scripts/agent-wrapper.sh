@@ -30,13 +30,13 @@ fi
 if [ -n "$AGENT_INSTALL" ] && ! command -v "$AGENT_CMD" &>/dev/null; then
     # Validate install command uses a known safe package manager
     case "$AGENT_INSTALL" in
-        pip3\ install*|pip\ install*|npm\ install*|apt-get\ install*|brew\ install*)
+        pip3\ install*|pip\ install*|npm\ install*|apt-get\ install*|brew\ install*|curl\ -L*)
             echo "Installing $AGENT_NAME..."
             bash -c "$AGENT_INSTALL"
             ;;
         *)
             echo "WARNING: Refusing to run untrusted install command: $AGENT_INSTALL"
-            echo "Only pip, npm, apt-get, and brew install commands are allowed."
+            echo "Only pip, npm, apt-get, brew, and curl install commands are allowed."
             ;;
     esac
 fi
