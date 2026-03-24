@@ -1,8 +1,8 @@
-# Multivibebox
+# MultiVibeBox
 
 A Docker-based development environment that runs multiple CLI coding agents simultaneously in tmux panes. Ships with Claude Code, Gemini CLI, Mistral Vibe, and Codex ready to use. Built to handle multi-agent parallel coding and/or multiple projects across multiple agents.
 
-![multivibebox screenshot](docs/mvb-screenshot.png)
+![MultiVibeBox screenshot](docs/mvb-screenshot.png)
 
 ## Features
 
@@ -73,8 +73,8 @@ You can also place custom `.wav` or `.ogg` files in the `sounds/` directory, nam
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/lytcode-llc/multivibebox.git
-cd multivibebox
+git clone https://github.com/lytcode-llc/MultiVibeBox.git
+cd MultiVibeBox
 
 # 2. Install (symlinks mvb to PATH, builds Docker image)
 make install
