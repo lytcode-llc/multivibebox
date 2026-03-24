@@ -1,7 +1,0 @@
-# Aider agent configuration (example)
-# Copy to aider.conf and uncomment the install line in the Dockerfile
-AGENT_NAME="aider"
-AGENT_CMD="aider"
-AGENT_ARGS="--model anthropic/claude-sonnet-4-20250514"
-AGENT_INSTALL="pip3 install --break-system-packages aider-chat"
-NOTIFY_SOUND="Ping"

@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     ca-certificates \
     openssh-client \
+    bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20 from NodeSource (Debian bookworm ships Node 18, too old for gemini-cli)

@@ -1,6 +1,8 @@
 # Multivibebox
 
-A Docker-based development environment that runs multiple CLI coding agents simultaneously in tmux panes. Starts with Claude Code but extensible to any CLI agent (Aider, Codex, etc.). Built to handle multi-agent coding at once.
+A Docker-based development environment that runs multiple CLI coding agents simultaneously in tmux panes. Ships with Claude Code, Gemini CLI, Mistral Vibe, and Codex ready to use. Built to handle multi-agent parallel coding and/or multiple projects across multiple agents.
+
+![multivibebox screenshot](docs/mvb-screenshot.png)
 
 ## Features
 
@@ -10,7 +12,7 @@ A Docker-based development environment that runs multiple CLI coding agents simu
 - Git worktree isolation per agent
 - Conversation persistence for all agents across restarts
 - SSH agent forwarding for private repos
-- macOS Keychain OAuth extraction
+- macOS Keychain OAuth extraction for Claude Code
 - Linux credentials file extraction
 - API key authentication fallback
 - Tmux pane navigation with mouse or keyboard
@@ -122,8 +124,11 @@ mvb start myproject --path ~/Projects/myproject --shared
 Each pane gets its own project directory. Use `agent:path` pane specs:
 
 ```bash
-# Two different projects
+# Two different projects, same CLI agents
 mvb start claude:~/Projects/frontend claude:~/Projects/backend
+
+# Two different projects, different CLI agents
+mvb start gemini:~/Projects/frontend codex:~/Projects/backend
 
 # Multiple panes on the same project + others, project name is auto-generated (frontend+frontend+api)
 mvb start claude:~/Projects/frontend claude:~/Projects/frontend claude:~/Projects/api
@@ -170,6 +175,10 @@ When an agent response takes longer than 30 seconds, you'll hear a system sound 
 Text-to-speech uses `say` on macOS, `espeak`/`spd-say` on Linux, and PowerShell on WSL.
 
 ## Adding a Coding Agent
+
+Gemini CLI (`gemini.conf`), Mistral Vibe (`mistral.conf`), and Codex (`codex.conf`) are included and ready to use.
+
+To add your own agent:
 
 1. Create a config file in `config/agents/`:
 
@@ -218,7 +227,7 @@ Private repos authenticate via SSH agent forwarding. Your SSH keys never enter t
 
 - API keys are stored in `config/.env` with owner-only permissions (600)
 - OAuth tokens are passed via mounted secret files, not environment variables
-- Agent install commands are restricted to known package managers (pip, npm, apt-get, brew)
+- Agent install commands are restricted to known package managers (pip, npm, apt-get, brew, curl)
 
 ## Troubleshooting
 
@@ -226,7 +235,7 @@ Private repos authenticate via SSH agent forwarding. Your SSH keys never enter t
 ```
 Error: Docker is not running. Please start Docker Desktop.
 ```
-Open Docker Desktop and wait for it to start.
+On macOS, `mvb start` will automatically launch Docker Desktop and wait for it to be ready. On Linux, start Docker manually and retry.
 
 ### No sound on notifications
 - Check that `notify/` directory exists and is writable
